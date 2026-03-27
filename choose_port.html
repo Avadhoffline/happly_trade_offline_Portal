@@ -1,0 +1,29 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Choose PortType</title>
+    <style>
+        body { font-family: Arial; background-color: #f0f2f5; margin: 0; padding: 0; }
+        .header-box { background-color: #4c82af; color: white; text-align: center; padding: 20px; font-size: 28px; font-weight: bold; }
+        .container { width: 90%; max-width: 400px; margin: 50px auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); text-align: center; }
+        select { width: 60%; padding: 10px; margin: 15px 0; border-radius: 6px; border: 1px solid #ccc; font-size: 16px; }
+        button { width: 50%; padding: 12px; background-color: #4CAF50; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 15px; }
+        button:hover { background-color: #456fa0; }
+    </style>
+</head>
+<body>
+    <div class="header-box">Happily_Trade_Offline</div>
+    <div class="container">
+        <h2>Choose PortType</h2>
+        <form method="POST" action="/select_port">
+            <select name="port_selection">
+                {% for user in users %}
+                    <option value="{{ loop.index0 }}">{{ user['PortType'] }} (HS: {{ user['HsCode'] }})</option>
+                {% endfor %}
+            </select><br>
+            <button type="submit">Proceed</button>
+        </form>
+    </div>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+    <style>
+        body { font-family: Arial; background-color: #f0f2f5; margin: 0; padding: 0; }
+        .header-box { background-color: #4c82af; color: white; text-align: center; padding: 20px; font-size: 28px; font-weight: bold; }
+        .container { width: 90%; max-width: 500px; margin: 50px auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); text-align: center; }
+        input[type="text"] { width: 80%; padding: 12px; margin: 10px 0; border-radius: 6px; border: 1px solid #ccc; font-size: 16px; }
+
+        button {
+            width: 60%;
+            padding: 12px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+
+        button:hover { background-color: #456fa0; }
+
+        .back-btn {
+            background-color: #f0ad4e;
+            width: 40%;
+        }
+
+        .back-btn:hover {
+            background-color: #ec971f;
+        }
+
+        .logout {
+            color: #d9534f;
+            text-decoration: none;
+            font-size: 16px;
+        }
+
+        hr { margin: 20px 0; }
+    </style>
+</head>
+<body>
+
+    <div class="header-box">Happily_Trade_Offline Dashboard</div>
+
+    <div class="container">
+        <h2>Logged in as: {{ session['user'] }}</h2>
+
+        <!-- Back Button -->
+        <form action="/change_port" method="GET">
+            <button type="submit" class="back-btn">⬅ Change Port</button>
+        </form>
+
+        <br>
+
+        <a href="/logout" class="logout">Logout</a>
+
+        <hr>
+
+        <h3>Download Your {{ user_port_type.capitalize() }} Data</h3>
+
+        <form method="POST">
+            <input type="text" name="hs_code" placeholder="HS Code (default: {{ user_hs_code }})"><br>
+            <button type="submit">Download Excel</button>
+        </form>
+    </div>
+
+</body>
+</html>
