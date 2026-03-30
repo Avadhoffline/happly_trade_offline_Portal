@@ -1,7 +1,7 @@
-from flask import Flask, render_template, request, redirect, send_file, session, Response
+from flask import Flask, render_template, request, redirect, session, Response
 import mysql.connector
-import pandas as pd
 import io
+import zipfile
 from datetime import datetime
 
 app = Flask(__name__)
@@ -16,7 +16,9 @@ db_config = {
     'database': 'test'
 }
 
-# -------------------- LOGIN PAGE --------------------
+MAX_ROWS_PER_FILE = 600000  # 6 lakh
+
+# -------------------- LOGIN --------------------
 @app.route('/', methods=['GET', 'POST'])
 def login():
     error = None
@@ -27,24 +29,20 @@ def login():
         try:
             conn = mysql.connector.connect(**db_config)
             cursor = conn.cursor(dictionary=True)
-
             cursor.execute(
                 "SELECT DISTINCT Email, Password, HsCode, PortType FROM Users WHERE Email=%s AND Password=%s",
                 (email, password)
             )
             users = cursor.fetchall()
-
         except Exception as e:
             error = f"Database error: {e}"
             users = []
-
         finally:
             cursor.close()
             conn.close()
 
         if users:
             session['users'] = users
-
             if len(users) == 1:
                 session['user'] = users[0]['Email']
                 session['port_type'] = users[0]['PortType']
@@ -105,42 +103,53 @@ def dashboard():
         query = f"SELECT * FROM `{table_name}` WHERE `HS Code` LIKE %s"
         cursor.execute(query, (hs_filter,))
 
-        # -------------------- STREAMING CSV --------------------
-        def generate():
-            # Header
-            columns = [col[0] for col in cursor.description]
-            yield ','.join(columns) + '\n'
+        # -------------------- CREATE ZIP IN MEMORY --------------------
+        zip_buffer = io.BytesIO()
+        zip_file = zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED)
 
-            row_count = 0
-            MAX_ROWS = 500000  # safety limit
+        file_count = 1
+        row_count = 0
 
-            for row in cursor:
-                row_count += 1
+        csv_buffer = io.StringIO()
 
-                if row_count > MAX_ROWS:
-                    yield "\n--- DATA LIMIT REACHED (500000 rows) ---"
-                    break
+        # HEADER
+        columns = [col[0] for col in cursor.description]
+        header = ','.join(columns) + '\n'
+        csv_buffer.write(header)
 
-                yield ','.join(str(v) if v is not None else '' for v in row.values()) + '\n'
+        for row in cursor:
+            csv_buffer.write(','.join(str(v) if v is not None else '' for v in row.values()) + '\n')
+            row_count += 1
 
-        # -------------------- FILE NAME --------------------
-        hs_code_for_file = hs_code_input if hs_code_input else user_hs_code
-        filename = f"{hs_code_for_file}_{port_type}.csv"
+            # SPLIT FILE
+            if row_count >= MAX_ROWS_PER_FILE:
+                zip_file.writestr(f"data_part_{file_count}.csv", csv_buffer.getvalue())
+                file_count += 1
+                row_count = 0
+                csv_buffer = io.StringIO()
+                csv_buffer.write(header)
 
-        # -------------------- LOG DOWNLOAD --------------------
+        # LAST FILE
+        if row_count > 0:
+            zip_file.writestr(f"data_part_{file_count}.csv", csv_buffer.getvalue())
+
+        zip_file.close()
+        zip_buffer.seek(0)
+
+        filename = f"{user_hs_code}_{port_type}.zip"
+
+        # LOG DOWNLOAD
         if 'downloads' not in session:
             session['downloads'] = []
 
         session['downloads'].append({
-            'hs_code': hs_code_for_file,
-            'port_type': port_type,
-            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'filename': filename
+            'filename': filename,
+            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
 
         return Response(
-            generate(),
-            mimetype='text/csv',
+            zip_buffer,
+            mimetype='application/zip',
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
 
@@ -150,55 +159,6 @@ def dashboard():
         user_hs_code=user_hs_code,
         downloads=session.get('downloads', [])
     )
-
-# -------------------- DOWNLOAD HISTORY --------------------
-@app.route('/download/<filename>')
-def download_file(filename):
-    if 'downloads' not in session:
-        return redirect('/dashboard')
-
-    record = next((d for d in session['downloads'] if d['filename'] == filename), None)
-
-    if not record:
-        return "File not found"
-
-    port_type = record['port_type']
-    hs_code = record['hs_code']
-
-    table_mapping = {
-        "import": "Monthly_import_off_1to31th_Jan26",
-        "export": "Monthly_Export_Offline_Jan26",
-        "sez_import": "SEZ_I_Off_Jan26",
-        "sez_export": "Sez_E_Off_jan26"
-    }
-
-    table_name = table_mapping.get(port_type)
-
-    conn = mysql.connector.connect(**db_config)
-    cursor = conn.cursor(dictionary=True)
-
-    query = f"SELECT * FROM `{table_name}` WHERE `HS Code` LIKE %s"
-    cursor.execute(query, (f"{hs_code}%",))
-
-    def generate():
-        columns = [col[0] for col in cursor.description]
-        yield ','.join(columns) + '\n'
-
-        for row in cursor:
-            yield ','.join(str(v) if v else '' for v in row.values()) + '\n'
-
-    return Response(
-        generate(),
-        mimetype='text/csv',
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
-
-# -------------------- CHANGE PORT --------------------
-@app.route('/change_port')
-def change_port():
-    if 'users' not in session:
-        return redirect('/')
-    return render_template('choose_port.html', users=session['users'])
 
 # -------------------- LOGOUT --------------------
 @app.route('/logout')
