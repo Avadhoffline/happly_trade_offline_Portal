@@ -38,6 +38,25 @@
         }
 
         hr { margin: 20px 0; }
+
+        /* ✅ PROGRESS BAR STYLE */
+        #progress-container {
+            display: none;
+            width: 100%;
+            background-color: #ddd;
+            border-radius: 6px;
+            margin-top: 20px;
+        }
+
+        #progress-bar {
+            width: 0%;
+            height: 30px;
+            background-color: #28a745;
+            color: white;
+            text-align: center;
+            line-height: 30px;
+            border-radius: 6px;
+        }
     </style>
 </head>
 <body>
@@ -60,11 +79,46 @@
 
         <h3>Download Your {{ user_port_type.capitalize() }} Data</h3>
 
-        <form method="POST">
+        <!-- ✅ FORM UPDATED -->
+        <form method="POST" onsubmit="startProgress()">
             <input type="text" name="hs_code" placeholder="HS Code (default: {{ user_hs_code }})"><br>
             <button type="submit">Download Data</button>
         </form>
+
+        <!-- ✅ PROGRESS BAR UI -->
+        <div id="progress-container">
+            <div id="progress-bar">0%</div>
+        </div>
+
     </div>
+
+    <!-- ✅ SCRIPT -->
+    <script>
+    function startProgress() {
+        document.getElementById("progress-container").style.display = "block";
+
+        let interval = setInterval(() => {
+            fetch('/progress')
+            .then(response => response.json())
+            .then(data => {
+                let progress = data.progress;
+                let bar = document.getElementById("progress-bar");
+
+                bar.style.width = progress + "%";
+                bar.innerHTML = progress + "%";
+
+                if (progress >= 100) {
+                    clearInterval(interval);
+
+                    // Optional: hide after 3 sec
+                    setTimeout(() => {
+                        document.getElementById("progress-container").style.display = "none";
+                    }, 3000);
+                }
+            });
+        }, 1000);
+    }
+    </script>
 
 </body>
 </html>
