@@ -1,10 +1,11 @@
-from flask import Flask, render_template, request, redirect, session, Response
+from flask import Flask, render_template, request, redirect, session, send_file, jsonify
 import mysql.connector
 import io
 import zipfile
+import os
+import uuid
 from datetime import datetime
 from openpyxl import Workbook
-from openpyxl.styles import Font
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey123"
@@ -18,7 +19,12 @@ db_config = {
     'database': 'test'
 }
 
-MAX_ROWS_PER_FILE = 600000  # safe under Excel limit (1,048,576)
+MAX_ROWS_PER_FILE = 600000
+CHUNK_SIZE = 10000
+DOWNLOAD_FOLDER = "/tmp"
+
+# -------------------- PROGRESS STORE --------------------
+progress_store = {}
 
 # -------------------- LOGIN --------------------
 @app.route('/', methods=['GET', 'POST'])
@@ -102,44 +108,67 @@ def dashboard():
         conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor(dictionary=True)
 
+        # -------------------- COUNT TOTAL ROWS --------------------
+        count_query = f"SELECT COUNT(*) as total FROM `{table_name}` WHERE `HS Code` LIKE %s"
+        cursor.execute(count_query, (hs_filter,))
+        total_rows = cursor.fetchone()['total']
+
+        # -------------------- MAIN QUERY --------------------
         query = f"SELECT * FROM `{table_name}` WHERE `HS Code` LIKE %s"
         cursor.execute(query, (hs_filter,))
 
-        # -------------------- CREATE ZIP --------------------
-        zip_buffer = io.BytesIO()
-        zip_file = zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED)
+        # -------------------- TASK ID --------------------
+        task_id = str(uuid.uuid4())
+        session['task_id'] = task_id
+        progress_store[task_id] = 0
+
+        # -------------------- FILE SETUP --------------------
+        filename = f"{user_hs_code}_{port_type}.zip"
+        zip_path = os.path.join(DOWNLOAD_FOLDER, filename)
+        zip_file = zipfile.ZipFile(zip_path, mode='w', compression=zipfile.ZIP_DEFLATED)
 
         file_count = 1
         row_count = 0
+        processed_rows = 0
 
-        # Create Excel workbook (write-only for performance)
         wb = Workbook(write_only=True)
         ws = wb.create_sheet(title="Data")
 
-        # HEADER
         columns = [col[0] for col in cursor.description]
         ws.append(columns)
 
-        for row in cursor:
-            ws.append([row[col] if row[col] is not None else '' for col in columns])
-            row_count += 1
+        # -------------------- PROCESS DATA --------------------
+        while True:
+            rows = cursor.fetchmany(CHUNK_SIZE)
+            if not rows:
+                break
 
-            # SPLIT FILE
-            if row_count >= MAX_ROWS_PER_FILE:
-                excel_buffer = io.BytesIO()
-                wb.save(excel_buffer)
-                excel_buffer.seek(0)
+            for row in rows:
+                ws.append([row[col] if row[col] is not None else '' for col in columns])
 
-                zip_file.writestr(f"data_part_{file_count}.xlsx", excel_buffer.read())
+                row_count += 1
+                processed_rows += 1
 
-                # RESET
-                file_count += 1
-                row_count = 0
-                wb = Workbook(write_only=True)
-                ws = wb.create_sheet(title="Data")
-                ws.append(columns)
+                # UPDATE PROGRESS
+                if total_rows > 0:
+                    progress_store[task_id] = int((processed_rows / total_rows) * 100)
 
-        # LAST FILE
+                # SPLIT FILE
+                if row_count >= MAX_ROWS_PER_FILE:
+                    excel_buffer = io.BytesIO()
+                    wb.save(excel_buffer)
+                    excel_buffer.seek(0)
+
+                    zip_file.writestr(f"data_part_{file_count}.xlsx", excel_buffer.read())
+
+                    file_count += 1
+                    row_count = 0
+
+                    wb = Workbook(write_only=True)
+                    ws = wb.create_sheet(title="Data")
+                    ws.append(columns)
+
+        # -------------------- FINAL FILE --------------------
         if row_count > 0:
             excel_buffer = io.BytesIO()
             wb.save(excel_buffer)
@@ -147,9 +176,11 @@ def dashboard():
             zip_file.writestr(f"data_part_{file_count}.xlsx", excel_buffer.read())
 
         zip_file.close()
-        zip_buffer.seek(0)
+        cursor.close()
+        conn.close()
 
-        filename = f"{user_hs_code}_{port_type}.zip"
+        # MARK COMPLETE
+        progress_store[task_id] = 100
 
         # LOG DOWNLOAD
         if 'downloads' not in session:
@@ -160,14 +191,7 @@ def dashboard():
             'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
 
-        cursor.close()
-        conn.close()
-
-        return Response(
-            zip_buffer,
-            mimetype='application/zip',
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
+        return send_file(zip_path, as_attachment=True)
 
     return render_template(
         'dashboard.html',
@@ -175,6 +199,15 @@ def dashboard():
         user_hs_code=user_hs_code,
         downloads=session.get('downloads', [])
     )
+
+# -------------------- PROGRESS API --------------------
+@app.route('/progress')
+def progress():
+    task_id = session.get('task_id')
+    if not task_id:
+        return jsonify({"progress": 0})
+
+    return jsonify({"progress": progress_store.get(task_id, 0)})
 
 # -------------------- LOGOUT --------------------
 @app.route('/logout')
