@@ -26,7 +26,7 @@ def login():
     if request.method == 'POST':
         email = request.form['email'].strip()
         password = request.form['password'].strip()
-
+        conn = cursor = None
         try:
             conn = mysql.connector.connect(**db_config)
             cursor = conn.cursor(dictionary=True)
@@ -39,8 +39,10 @@ def login():
             error = f"Database error: {e}"
             users = []
         finally:
-            cursor.close()
-            conn.close()
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
 
         if users:
             session['users'] = users
@@ -104,72 +106,78 @@ def dashboard():
             return "Invalid HS Code"
         hs_filter = f"{hs_code_input or user_hs_code}%"
 
-        conn = mysql.connector.connect(**db_config)
-        cursor = conn.cursor(dictionary=True)
-        query = f"SELECT * FROM `{table_name}` WHERE `HS Code` LIKE %s"
-        cursor.execute(query, (hs_filter,))
+        conn = cursor = None
+        try:
+            conn = mysql.connector.connect(**db_config)
+            cursor = conn.cursor(dictionary=True)
+            query = f"SELECT * FROM `{table_name}` WHERE `HS Code` LIKE %s"
+            cursor.execute(query, (hs_filter,))
+            columns = [col[0] for col in cursor.description]
 
-        # -------------------- CREATE ZIP WITH CSV FILES --------------------
-        zip_buffer = io.BytesIO()
-        zip_file = zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED)
+            zip_buffer = io.BytesIO()
+            zip_file = zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED)
 
-        file_count = 1
-        row_count = 0
-        columns = [col[0] for col in cursor.description]
-        csv_rows = []
+            file_count = 1
+            row_count = 0
+            csv_rows = []
 
-        for row in cursor:
-            formatted_row = []
-            for col in columns:
-                val = row[col]
-                if isinstance(val, (int, float)):
-                    formatted_row.append(f"{val:,}")
-                elif isinstance(val, datetime):
-                    formatted_row.append(val.strftime("%Y-%m-%d"))
-                else:
-                    formatted_row.append(val if val is not None else '')
-            csv_rows.append(formatted_row)
-            row_count += 1
+            for row in cursor:
+                formatted_row = []
+                for col in columns:
+                    val = row.get(col, '')
+                    if isinstance(val, datetime):
+                        formatted_row.append(val.strftime("%Y-%m-%d"))
+                    elif val is None:
+                        formatted_row.append('')
+                    else:
+                        formatted_row.append(val)
+                csv_rows.append(formatted_row)
+                row_count += 1
 
-            # SPLIT FILE
-            if row_count >= MAX_ROWS_PER_FILE:
+                # Split large files
+                if row_count >= MAX_ROWS_PER_FILE:
+                    csv_buffer = io.StringIO()
+                    writer = csv.writer(csv_buffer)
+                    writer.writerow(columns)
+                    writer.writerows(csv_rows)
+                    zip_file.writestr(f"data_part_{file_count}.csv", csv_buffer.getvalue())
+                    file_count += 1
+                    row_count = 0
+                    csv_rows = []
+
+            # Last file
+            if row_count > 0:
                 csv_buffer = io.StringIO()
                 writer = csv.writer(csv_buffer)
                 writer.writerow(columns)
                 writer.writerows(csv_rows)
                 zip_file.writestr(f"data_part_{file_count}.csv", csv_buffer.getvalue())
-                file_count += 1
-                row_count = 0
-                csv_rows = []
 
-        # LAST FILE
-        if row_count > 0:
-            csv_buffer = io.StringIO()
-            writer = csv.writer(csv_buffer)
-            writer.writerow(columns)
-            writer.writerows(csv_rows)
-            zip_file.writestr(f"data_part_{file_count}.csv", csv_buffer.getvalue())
+            zip_file.close()
+            zip_buffer.seek(0)
+            filename = f"{user_hs_code}_{port_type}.zip"
 
-        zip_file.close()
-        zip_buffer.seek(0)
-        filename = f"{user_hs_code}_{port_type}.zip"
+            # Log downloads in session
+            if 'downloads' not in session:
+                session['downloads'] = []
+            session['downloads'].append({
+                'filename': filename,
+                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
 
-        # LOG DOWNLOAD
-        if 'downloads' not in session:
-            session['downloads'] = []
-        session['downloads'].append({
-            'filename': filename,
-            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
+            return Response(
+                zip_buffer,
+                mimetype='application/zip',
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
 
-        cursor.close()
-        conn.close()
-
-        return Response(
-            zip_buffer,
-            mimetype='application/zip',
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
+        except Exception as e:
+            return f"Error: {e}"
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
 
     return render_template(
         'dashboard.html',
