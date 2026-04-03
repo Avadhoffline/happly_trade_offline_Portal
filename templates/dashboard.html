@@ -20,9 +20,8 @@
 <div class="header-box">Happily_Trade_Offline Dashboard</div>
 
 <div class="container">
-    <h2>Logged in as: {{ session['user'] }}</h2>
+    <h2>Logged in as: {{ session.get('user', 'Unknown') }}</h2>
 
-    <!-- Back Button -->
     <form action="/change_port" method="GET">
         <button type="submit" class="back-btn">⬅ Change Port</button>
     </form>
@@ -33,7 +32,6 @@
     <hr>
 
     <h3>Download Your {{ user_port_type.capitalize() }} Data</h3>
-
     <form method="POST">
         <input type="text" name="hs_code" placeholder="HS Code (default: {{ user_hs_code }})"><br>
         <button type="submit">Download Data</button>
