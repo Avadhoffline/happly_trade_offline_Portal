@@ -17,7 +17,7 @@ db_config = {
     'database': 'test'
 }
 
-MAX_ROWS_PER_FILE = 600000  # safe under Excel limit (1,048,576)
+MAX_ROWS_PER_FILE = 600000  # safe under Excel limit
 
 # -------------------- LOGIN --------------------
 @app.route('/', methods=['GET', 'POST'])
@@ -69,6 +69,14 @@ def select_port():
 
     return redirect('/dashboard')
 
+# -------------------- CHANGE PORT --------------------
+@app.route('/change_port')
+def change_port():
+    session.pop('user', None)
+    session.pop('port_type', None)
+    session.pop('hs_code', None)
+    return redirect('/')
+
 # -------------------- DASHBOARD --------------------
 @app.route('/dashboard', methods=['GET', 'POST'])
 def dashboard():
@@ -92,15 +100,12 @@ def dashboard():
 
     if request.method == 'POST':
         hs_code_input = request.form.get('hs_code', '').strip()
-
         if hs_code_input and not hs_code_input.startswith(user_hs_code):
             return "Invalid HS Code"
-
         hs_filter = f"{hs_code_input or user_hs_code}%"
 
         conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor(dictionary=True)
-
         query = f"SELECT * FROM `{table_name}` WHERE `HS Code` LIKE %s"
         cursor.execute(query, (hs_filter,))
 
@@ -110,12 +115,10 @@ def dashboard():
 
         file_count = 1
         row_count = 0
-
         columns = [col[0] for col in cursor.description]
         csv_rows = []
 
         for row in cursor:
-            # Optional: format numeric values with commas
             formatted_row = []
             for col in columns:
                 val = row[col]
@@ -132,11 +135,9 @@ def dashboard():
             if row_count >= MAX_ROWS_PER_FILE:
                 csv_buffer = io.StringIO()
                 writer = csv.writer(csv_buffer)
-                writer.writerow(columns)  # header
+                writer.writerow(columns)
                 writer.writerows(csv_rows)
                 zip_file.writestr(f"data_part_{file_count}.csv", csv_buffer.getvalue())
-
-                # RESET
                 file_count += 1
                 row_count = 0
                 csv_rows = []
@@ -151,13 +152,11 @@ def dashboard():
 
         zip_file.close()
         zip_buffer.seek(0)
-
         filename = f"{user_hs_code}_{port_type}.zip"
 
         # LOG DOWNLOAD
         if 'downloads' not in session:
             session['downloads'] = []
-
         session['downloads'].append({
             'filename': filename,
             'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
