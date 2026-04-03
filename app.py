@@ -3,8 +3,7 @@ import mysql.connector
 import io
 import zipfile
 from datetime import datetime
-from openpyxl import Workbook
-from openpyxl.styles import Font
+import csv
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey123"
@@ -105,46 +104,50 @@ def dashboard():
         query = f"SELECT * FROM `{table_name}` WHERE `HS Code` LIKE %s"
         cursor.execute(query, (hs_filter,))
 
-        # -------------------- CREATE ZIP --------------------
+        # -------------------- CREATE ZIP WITH CSV FILES --------------------
         zip_buffer = io.BytesIO()
         zip_file = zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED)
 
         file_count = 1
         row_count = 0
 
-        # Create Excel workbook (write-only for performance)
-        wb = Workbook(write_only=True)
-        ws = wb.create_sheet(title="Data")
-
-        # HEADER
         columns = [col[0] for col in cursor.description]
-        ws.append(columns)
+        csv_rows = []
 
         for row in cursor:
-            ws.append([row[col] if row[col] is not None else '' for col in columns])
+            # Optional: format numeric values with commas
+            formatted_row = []
+            for col in columns:
+                val = row[col]
+                if isinstance(val, (int, float)):
+                    formatted_row.append(f"{val:,}")
+                elif isinstance(val, datetime):
+                    formatted_row.append(val.strftime("%Y-%m-%d"))
+                else:
+                    formatted_row.append(val if val is not None else '')
+            csv_rows.append(formatted_row)
             row_count += 1
 
             # SPLIT FILE
             if row_count >= MAX_ROWS_PER_FILE:
-                excel_buffer = io.BytesIO()
-                wb.save(excel_buffer)
-                excel_buffer.seek(0)
-
-                zip_file.writestr(f"data_part_{file_count}.xlsx", excel_buffer.read())
+                csv_buffer = io.StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(columns)  # header
+                writer.writerows(csv_rows)
+                zip_file.writestr(f"data_part_{file_count}.csv", csv_buffer.getvalue())
 
                 # RESET
                 file_count += 1
                 row_count = 0
-                wb = Workbook(write_only=True)
-                ws = wb.create_sheet(title="Data")
-                ws.append(columns)
+                csv_rows = []
 
         # LAST FILE
         if row_count > 0:
-            excel_buffer = io.BytesIO()
-            wb.save(excel_buffer)
-            excel_buffer.seek(0)
-            zip_file.writestr(f"data_part_{file_count}.xlsx", excel_buffer.read())
+            csv_buffer = io.StringIO()
+            writer = csv.writer(csv_buffer)
+            writer.writerow(columns)
+            writer.writerows(csv_rows)
+            zip_file.writestr(f"data_part_{file_count}.csv", csv_buffer.getvalue())
 
         zip_file.close()
         zip_buffer.seek(0)
